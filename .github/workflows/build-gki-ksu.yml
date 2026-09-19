@@ -111,8 +111,11 @@ jobs:
           # CRCs the stock vendor_dlkm modules were built against stay valid.
           # android_kabi.h:61 collapses _ANDROID_KABI_REPLACE to the original field
           # under __GENKSYMS__, which is what makes this CRC-transparent.
-          patch -p1 < "$GITHUB_WORKSPACE/.github/patches/fix_sysvipc_kabi.patch"
-          patch -p1 < "$GITHUB_WORKSPACE/.github/patches/ntsync_base_compat.patch"
+          # NB: this repo is checked out with `path: _repo`, not at the workspace root.
+          P="$GITHUB_WORKSPACE/_repo/.github/patches"
+          ls -l "$P"
+          patch -p1 < "$P/fix_sysvipc_kabi.patch"
+          patch -p1 < "$P/ntsync_base_compat.patch"
           # Droidspaces needs these five; the rest it wants are already on in stock.
           # CGROUP_DEVICE/CGROUP_PIDS are deliberately NOT enabled - adding a cgroup
           # subsystem changes CGROUP_SUBSYS_COUNT and resizes css_set, which would
