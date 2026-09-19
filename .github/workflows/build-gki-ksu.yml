@@ -14,6 +14,10 @@ on:
       target: { default: "//common:kernel_aarch64_dist" }
       ksun_ref: { default: "v3.3.0" }
       use_droidspaces: { type: boolean, default: true }
+      # Set BOTH use_droidspaces and use_ksu false for an isolation build: a pure
+      # stock GKI rebuild. If that also bootloops, the kernel content was never the
+      # variable and the fault is in how the boot image is packed or flashed.
+      use_ksu: { type: boolean, default: true }
   workflow_call:
     inputs:
       gki_tag: { type: string, default: "android14-6.1-2026-03_r9" }
@@ -21,6 +25,7 @@ on:
       target: { type: string, default: "//common:kernel_aarch64_dist" }
       ksun_ref: { type: string, default: "v3.3.0" }
       use_droidspaces: { type: boolean, default: true }
+      use_ksu: { type: boolean, default: true }
 
 permissions:
   contents: write   # publish the release (boot+vbmeta+kernel+source)
@@ -145,6 +150,7 @@ jobs:
 
       - name: Integrate OFFICIAL KSU-Next (built-in, no susfs)
         id: ksu
+        if: inputs.use_ksu
         run: |
           cd "$WS"
           KSUN_REF="${{ inputs.ksun_ref }}"
