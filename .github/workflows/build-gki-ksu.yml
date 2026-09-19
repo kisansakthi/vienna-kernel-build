@@ -120,16 +120,20 @@ jobs:
           # CGROUP_DEVICE/CGROUP_PIDS are deliberately NOT enabled - adding a cgroup
           # subsystem changes CGROUP_SUBSYS_COUNT and resizes css_set, which would
           # break exactly the kABI this whole exercise is protecting.
-          cat >> arch/arm64/configs/gki_defconfig <<'EOF'
-          CONFIG_SYSVIPC=y
-          CONFIG_POSIX_MQUEUE=y
-          CONFIG_IPC_NS=y
-          CONFIG_PID_NS=y
-          CONFIG_DEVTMPFS=y
-          EOF
-          sed -i 's/^          CONFIG_/CONFIG_/' arch/arm64/configs/gki_defconfig
-          echo "--- droidspaces configs appended:"
-          tail -5 arch/arm64/configs/gki_defconfig
+          # kleaf runs `make savedefconfig` and REJECTS a defconfig that is not in
+          # canonical minimal form, so these cannot simply be appended - each has to
+          # land in the slot savedefconfig would put it in.
+          #   SYSVIPC      -> line 2, immediately before POSIX_MQUEUE
+          #   PID_NS       -> just drop the explicit disable; y is the default once
+          #                   NAMESPACES=y, so savedefconfig omits it entirely
+          #   DEVTMPFS     -> directly after CONFIG_PCI_ENDPOINT=y
+          # POSIX_MQUEUE is already =y and IPC_NS already defaults on: no edit needed.
+          D=arch/arm64/configs/gki_defconfig
+          sed -i '1a CONFIG_SYSVIPC=y' "$D"
+          sed -i '/^# CONFIG_PID_NS is not set$/d' "$D"
+          sed -i '/^CONFIG_PCI_ENDPOINT=y$/a CONFIG_DEVTMPFS=y' "$D"
+          echo "--- droidspaces defconfig edits:"
+          grep -nE "^CONFIG_(SYSVIPC|POSIX_MQUEUE|DEVTMPFS)=y|CONFIG_PID_NS" "$D"
           # keep the tree clean so git-describe does not append -dirty to vermagic
           git update-index --assume-unchanged $(git ls-files -m) 2>/dev/null || true
           echo "--- scmversion (must NOT contain -dirty):"; ./scripts/setlocalversion || true
