@@ -9,16 +9,18 @@ name: build vienna GKI + OFFICIAL KSU-Next built-in (WITHOUT susfs)
 on:
   workflow_dispatch:
     inputs:
-      gki_tag: { default: "android14-6.1-2025-07_r11" }
+      gki_tag: { default: "android14-6.1-2026-03_r9" }
       manifest_branch: { default: "common-android14-6.1" }
       target: { default: "//common:kernel_aarch64_dist" }
       ksun_ref: { default: "v3.3.0" }
+      use_droidspaces: { type: boolean, default: true }
   workflow_call:
     inputs:
-      gki_tag: { type: string, default: "android14-6.1-2025-07_r11" }
+      gki_tag: { type: string, default: "android14-6.1-2026-03_r9" }
       manifest_branch: { type: string, default: "common-android14-6.1" }
       target: { type: string, default: "//common:kernel_aarch64_dist" }
       ksun_ref: { type: string, default: "v3.3.0" }
+      use_droidspaces: { type: boolean, default: true }
 
 permissions:
   contents: write   # publish the release (boot+vbmeta+kernel+source)
@@ -78,7 +80,10 @@ jobs:
           git fetch --depth=1 https://android.googlesource.com/kernel/common "refs/tags/${{ inputs.gki_tag }}"
           git checkout -q FETCH_HEAD
           H=$(git rev-parse HEAD)
-          [ "$H" = "d77c4cd65aedc9148e9db607aef6901cabfb62e5" ] || { echo "🔴 SHA mismatch"; exit 1; }
+          # CMF Phone 1 (Tetris/A015): android14-6.1-2026-03_r9, SUBLEVEL=162.
+          # This is the tree Google built the stock kernel from - its commit date
+          # (Mon Apr 20 09:18:56 2026) matches the device's /proc/version exactly.
+          [ "$H" = "65896c4edca1614fb2844dc27399c9347d28f86d" ] || { echo "🔴 SHA mismatch: $H"; exit 1; }
           echo "HEAD=$H  SUBLEVEL=$(grep -E '^SUBLEVEL' Makefile)"
 
       - name: Remove GKI protected exports (wifi/bt fix on custom kernel)
@@ -96,6 +101,35 @@ jobs:
           echo "--- protected_exports_list no BUILD.bazel (deve sumir):"
           grep -n protected_exports_list BUILD.bazel && { echo "ainda tem"; exit 1; } || echo "  (removido OK)"
           ls android/abi_gki_protected_exports_* 2>/dev/null && { echo "abi still present"; exit 1; } || echo "--- abi_gki_protected_exports_* removed OK"
+
+      - name: Droidspaces (sysvipc kABI + ntsync) + container configs
+        if: inputs.use_droidspaces
+        run: |
+          cd "$WS/common"
+          # sysvipc kABI patch: parks sysvsem/sysvshm in ANDROID_KABI_RESERVE(6/7/8)
+          # instead of the struct body, so task_struct keeps its stock layout and the
+          # CRCs the stock vendor_dlkm modules were built against stay valid.
+          # android_kabi.h:61 collapses _ANDROID_KABI_REPLACE to the original field
+          # under __GENKSYMS__, which is what makes this CRC-transparent.
+          patch -p1 < "$GITHUB_WORKSPACE/.github/patches/fix_sysvipc_kabi.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/.github/patches/ntsync_base_compat.patch"
+          # Droidspaces needs these five; the rest it wants are already on in stock.
+          # CGROUP_DEVICE/CGROUP_PIDS are deliberately NOT enabled - adding a cgroup
+          # subsystem changes CGROUP_SUBSYS_COUNT and resizes css_set, which would
+          # break exactly the kABI this whole exercise is protecting.
+          cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+          CONFIG_SYSVIPC=y
+          CONFIG_POSIX_MQUEUE=y
+          CONFIG_IPC_NS=y
+          CONFIG_PID_NS=y
+          CONFIG_DEVTMPFS=y
+          EOF
+          sed -i 's/^          CONFIG_/CONFIG_/' arch/arm64/configs/gki_defconfig
+          echo "--- droidspaces configs appended:"
+          tail -5 arch/arm64/configs/gki_defconfig
+          # keep the tree clean so git-describe does not append -dirty to vermagic
+          git update-index --assume-unchanged $(git ls-files -m) 2>/dev/null || true
+          echo "--- scmversion (must NOT contain -dirty):"; ./scripts/setlocalversion || true
 
       - name: Integrate OFFICIAL KSU-Next (built-in, no susfs)
         id: ksu
@@ -126,8 +160,11 @@ jobs:
       - name: Build (common + official KSU-Next)
         id: build
         env:
-          BUILD_NUMBER: "14680598"
-          SOURCE_DATE_EPOCH: "1767798273"
+          # Tetris/A015 stock: 6.1.162-android14-11-g65896c4edca1-ab15242664
+          # BUILD_NUMBER supplies the -ab suffix (setlocalversion, last block);
+          # -g65896c4edca1 comes naturally from git describe on the checked-out tag.
+          BUILD_NUMBER: "15242664"
+          SOURCE_DATE_EPOCH: "1776676736"   # Mon Apr 20 09:18:56 2026 UTC
         run: |
           set -o pipefail
           cd "$WS"
@@ -166,8 +203,34 @@ jobs:
           echo "  GKI common : ${{ inputs.gki_tag }} (android.googlesource.com/kernel/common)"
           echo "  KernelSU-Next: ${{ inputs.ksun_ref }} (github.com/KernelSU-Next/KernelSU-Next)"
 
+      - name: Stage Image into workspace for upload
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out-tetris"
+          for f in Image Image.lz4 Image.gz Module.symvers; do
+            [ -f "$WS/dist/$f" ] && cp "$WS/dist/$f" "$GITHUB_WORKSPACE/out-tetris/" && echo "staged $f"
+          done
+          # record what we actually built, so verification does not depend on log scraping
+          if [ -f "$GITHUB_WORKSPACE/out-tetris/Image" ]; then
+            strings "$GITHUB_WORKSPACE/out-tetris/Image" | grep -m1 'Linux version' \
+              > "$GITHUB_WORKSPACE/out-tetris/linux-version.txt"
+            cat "$GITHUB_WORKSPACE/out-tetris/linux-version.txt"
+          fi
+          ls -lh "$GITHUB_WORKSPACE/out-tetris/" || true
+
+      - name: Upload Image (Tetris - we repack/flash locally)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetris-kernel-image
+          path: out-tetris/
+          if-no-files-found: warn
+
+      # vienna's vbmeta recipe is for Motorola's LK, which REFUSES `fastboot flash boot`
+      # unless vbmeta already describes the image. Nothing's LK accepted our plain
+      # `fastboot flash boot_a` write, so we repack and flash locally instead.
       - name: Package flashable boot + patched vbmeta + publish release
-        if: success()
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
           DEVICE_TAG: W1UIS36H.39-17-8
