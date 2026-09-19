@@ -115,7 +115,12 @@ jobs:
           P="$GITHUB_WORKSPACE/_repo/.github/patches"
           ls -l "$P"
           patch -p1 < "$P/fix_sysvipc_kabi.patch"
-          patch -p1 < "$P/ntsync_base_compat.patch"
+          # ntsync_base_compat.patch is deliberately NOT applied. NTSYNC emulates
+          # Windows NT sync primitives for Wine/Proton; the upstream workflow bundles
+          # it under the same "Droidspaces & NTSYNC" flag but the container runtime
+          # does not use it. Here it builds as a module and modpost dies on
+          #   "__vfs_setxattr_noperm" [drivers/misc/ntsync.ko] undefined
+          # because that symbol is not exported. Nothing we want depends on it.
           # Droidspaces needs these five; the rest it wants are already on in stock.
           # CGROUP_DEVICE/CGROUP_PIDS are deliberately NOT enabled - adding a cgroup
           # subsystem changes CGROUP_SUBSYS_COUNT and resizes css_set, which would
