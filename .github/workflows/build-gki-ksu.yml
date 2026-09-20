@@ -142,6 +142,16 @@ jobs:
           sed -i '1a CONFIG_SYSVIPC=y' "$D"
           sed -i '/^# CONFIG_PID_NS is not set$/d' "$D"
           sed -i '/^CONFIG_PCI_ENDPOINT=y$/a CONFIG_DEVTMPFS=y' "$D"
+          # USER_NS: kABI-safe - cred.h:36 declares user_ns unconditionally, so the
+          # struct layout does not move; CONFIG_USER_NS only switches
+          # current_user_ns() from a constant to a field read. Canonical slot is
+          # between IPC_NS and PID_NS (init/Kconfig 1238 < 1246 < 1260); neither
+          # neighbour is listed, so it lands right after NAMESPACES.
+          sed -i '/^CONFIG_NAMESPACES=y$/a CONFIG_USER_NS=y' "$D"
+          # ADDRTYPE: GKI-mandatory per the Droidspaces docs, and what Docker's
+          # port-publishing rules (-m addrtype --dst-type LOCAL) are built on.
+          # Canonical slot is between TARGET_TCPMSS and MATCH_BPF.
+          sed -i '/^CONFIG_NETFILTER_XT_TARGET_TCPMSS=y$/a CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y' "$D"
           echo "--- droidspaces defconfig edits:"
           grep -nE "^CONFIG_(SYSVIPC|POSIX_MQUEUE|DEVTMPFS)=y|CONFIG_PID_NS" "$D"
           # keep the tree clean so git-describe does not append -dirty to vermagic
